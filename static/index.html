@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Data Analyst Agent</title>
+<style>
+  :root {
+    --bg: #0f1419;
+    --surface: #161b22;
+    --border: #2a313c;
+    --text: #d5dde5;
+    --text-dim: #7d8a99;
+    --accent: #5ec9a5;
+    --accent-dim: #3a7d68;
+    --error: #e5787a;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  header {
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+  }
+
+  header h1 {
+    font-size: 15px;
+    font-weight: 600;
+    margin: 0;
+    letter-spacing: 0.02em;
+  }
+
+  header h1 span { color: var(--accent); }
+
+  #session-info {
+    font-family: "SF Mono", "Consolas", monospace;
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+
+  #new-session {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    padding: 6px 12px;
+    border-radius: 4px;
+    font-size: 12px;
+    cursor: pointer;
+    margin-left: 12px;
+  }
+  #new-session:hover {
+    border-color: var(--error);
+    color: var(--error);
+  }
+  #new-session:focus-visible, #send:focus-visible, #question:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  #chat {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .turn { max-width: 960px; }
+
+  .q {
+    font-family: "SF Mono", "Consolas", monospace;
+    font-size: 13.5px;
+    color: var(--text);
+  }
+  .q::before {
+    content: "> ";
+    color: var(--accent);
+    font-weight: 700;
+  }
+
+  .a {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 14px;
+    margin-top: 6px;
+    font-size: 14px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+  }
+
+  .a.error { border-color: var(--error); color: var(--error); }
+  .a.pending { color: var(--text-dim); font-style: italic; }
+
+  #empty-state {
+    margin: auto;
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 13px;
+  }
+  #empty-state .prompt {
+    font-family: "SF Mono", "Consolas", monospace;
+    color: var(--accent);
+    font-size: 22px;
+    margin-bottom: 8px;
+  }
+
+  form {
+    display: flex;
+    gap: 10px;
+    padding: 16px 20px;
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  #question {
+    flex: 1;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 10px 12px;
+    border-radius: 6px;
+    font-size: 14px;
+    font-family: "SF Mono", "Consolas", monospace;
+  }
+  #question:disabled { opacity: 0.5; }
+
+  #send {
+    background: var(--accent-dim);
+    border: 1px solid var(--accent);
+    color: var(--text);
+    padding: 10px 18px;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  #send:hover:not(:disabled) { background: var(--accent); color: #0f1419; }
+  #send:disabled { opacity: 0.5; cursor: default; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Data Analyst <span>Agent</span></h1>
+  <div style="display:flex; align-items:center;">
+    <span id="session-info">session: —</span>
+    <button id="new-session" type="button">New session</button>
+  </div>
+</header>
+
+<div id="chat">
+  <div id="empty-state">
+    <div class="prompt">&gt;_</div>
+    Ask a question about the dataset to begin.
+  </div>
+</div>
+
+<form id="form">
+  <input id="question" type="text" placeholder="Ask about the data…" autocomplete="off" />
+  <button id="send" type="submit">Send</button>
+</form>
+
+<script>
+  const STORAGE_KEY = "csv_agent_session_id";
+  const chatEl = document.getElementById("chat");
+  const formEl = document.getElementById("form");
+  const inputEl = document.getElementById("question");
+  const sendEl = document.getElementById("send");
+  const sessionInfoEl = document.getElementById("session-info");
+  const newSessionBtn = document.getElementById("new-session");
+
+  let sessionId = null;
+
+  function setSessionDisplay(id) {
+    sessionInfoEl.textContent = "session: " + id.slice(0, 8);
+  }
+
+  function clearEmptyState() {
+    const empty = document.getElementById("empty-state");
+    if (empty) empty.remove();
+  }
+
+  function renderTurn(question, answer, { pending = false, error = false } = {}) {
+    clearEmptyState();
+    const wrap = document.createElement("div");
+    wrap.className = "turn";
+
+    const q = document.createElement("div");
+    q.className = "q";
+    q.textContent = question;
+    wrap.appendChild(q);
+
+    const a = document.createElement("div");
+    a.className = "a" + (pending ? " pending" : "") + (error ? " error" : "");
+    a.textContent = answer;
+    wrap.appendChild(a);
+
+    chatEl.appendChild(wrap);
+    chatEl.scrollTop = chatEl.scrollHeight;
+    return a; // return the answer element so we can update it later
+  }
+
+  async function createSession() {
+    const res = await fetch("/sessions", { method: "POST" });
+    if (!res.ok) throw new Error("Failed to create session");
+    const data = await res.json();
+    return data.session_id;
+  }
+
+  async function loadHistory(id) {
+    const res = await fetch(`/sessions/${id}/history`);
+    if (!res.ok) return false; // session may no longer exist server-side
+    const turns = await res.json();
+    if (turns.length === 0) return true;
+
+    clearEmptyState();
+    for (let i = 0; i < turns.length; i += 2) {
+      const q = turns[i]?.content ?? "";
+      const a = turns[i + 1]?.content ?? "";
+      renderTurn(q, a);
+    }
+    return true;
+  }
+
+  async function initSession() {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (stored) {
+      const ok = await loadHistory(stored);
+      if (ok) {
+        sessionId = stored;
+        setSessionDisplay(sessionId);
+        return;
+      }
+    }
+    // no stored session, or it no longer exists server-side
+    sessionId = await createSession();
+    localStorage.setItem(STORAGE_KEY, sessionId);
+    setSessionDisplay(sessionId);
+  }
+
+  async function startNewSession() {
+    localStorage.removeItem(STORAGE_KEY);
+    chatEl.innerHTML = '<div id="empty-state"><div class="prompt">&gt;_</div>Ask a question about the dataset to begin.</div>';
+    sessionId = await createSession();
+    localStorage.setItem(STORAGE_KEY, sessionId);
+    setSessionDisplay(sessionId);
+  }
+
+  formEl.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const question = inputEl.value.trim();
+    if (!question || !sessionId) return;
+
+    inputEl.value = "";
+    inputEl.disabled = true;
+    sendEl.disabled = true;
+
+    const answerEl = renderTurn(question, "Thinking…", { pending: true });
+
+    try {
+      const res = await fetch("/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: sessionId, question }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Request failed");
+
+      answerEl.textContent = data.answer;
+      answerEl.classList.remove("pending");
+    } catch (err) {
+      answerEl.textContent = "Error: " + err.message;
+      answerEl.classList.remove("pending");
+      answerEl.classList.add("error");
+    } finally {
+      inputEl.disabled = false;
+      sendEl.disabled = false;
+      inputEl.focus();
+    }
+  });
+
+  newSessionBtn.addEventListener("click", startNewSession);
+
+  initSession().catch((err) => {
+    sessionInfoEl.textContent = "session: error";
+    console.error(err);
+  });
+</script>
+
+</body>
+</html>
